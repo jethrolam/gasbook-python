@@ -1,0 +1,3 @@
+*.swp
+venv
+gsbook/*.json
