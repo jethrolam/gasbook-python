@@ -1,3 +1,5 @@
 *.swp
+*.pyc
 venv
-gsbook/*.json
+.ipynb_checkpoints
+gsbook/gsbook-oauth.json
