@@ -21,22 +21,30 @@ def numberToLetters(q):
     return result
 
 
-def _get(gc, sheet_title, tab_title):
+def _get(sheet, tab_title):
     """ Query a Google Spreadsheet and return result as dataframe """
-    tab = gc.open(sheet_title).worksheet(tab_title)
+    tab = sheet.worksheet(tab_title)
 
     data = tab.get_all_values()
     return pd.DataFrame(data[1:], columns=data[0])
 
 
-def _put(gc, sheet_title, tab_title, df):
+def _put(sheet, tab_title, df):
     """ Send a dataframe to Google Spreadsheet 
         See: https://www.dataiku.com/learn/guide/code/python/export-a-dataset-to-google-spreadsheets.html
     """
-    tab = gc.open(sheet_title).worksheet(tab_title)
+    try:
+        tab = sheet.worksheet(tab_title)
+    except gspread.exceptions.WorksheetNotFound:
+        pass
+    else:
+        sheet.del_worksheet(tab)
+    finally:
+        columns = df.reset_index().columns.values.tolist()
+        num_lines, num_columns = df.reset_index().shape
+        tab = sheet.add_worksheet(title=tab_title, rows=num_lines+4, cols=num_columns+4)
 
     # Write header
-    columns = df.reset_index().columns.values.tolist()
     cell_list = tab.range('A1:'+numberToLetters(len(columns))+'1')
     for cell in cell_list:
         val = columns[cell.col-1]
@@ -46,7 +54,6 @@ def _put(gc, sheet_title, tab_title, df):
     tab.update_cells(cell_list)
 
     # Write body
-    num_lines, num_columns = df.reset_index().shape
     cell_list = tab.range('A2:'+numberToLetters(num_columns)+str(num_lines+1))
     for cell in cell_list:
         val = df.reset_index().iloc[cell.row-2,cell.col-1]
@@ -59,28 +66,49 @@ def _put(gc, sheet_title, tab_title, df):
 
 
 def _transform(event_df):
-    """ Transform event_df into various forms """ 
+    """ Transform event_df into a map of {tab_title: df}  """ 
     summary_df = event_df.groupby(['Name','Standard']).max()['Score'].unstack()
-    return summary_df
+    standard_df = event_df.groupby(['Standard', 'Version']).count()['Date'].unstack().fillna(0)
+    individual_df = event_df.groupby(['Name','Standard','Version','Date'])\
+                    .agg({'Score':['max','count'], 'Remark':['sum']})[['Score', 'Remark']]
+
+    return {
+        'Summary': summary_df,
+        'Standard': standard_df, 
+        'Individual': individual_df
+    }
 
 
-def update(sheet_title):
+def update(sheet_key):
     """ Triggered by user, this method takes event data from Google Spreadsheet,
         tranform it into various forms, and publish them back to Googl
     """        
     credentials = ServiceAccountCredentials.from_json_keyfile_name(OAUTH, SCOPE)
     gc = gspread.authorize(credentials)
+    sheet = gc.open_by_key(sheet_key)
 
-    print('Reading data from {}:{}...'.format(sheet_title, 'Event'))
-    event_df = _get(gc, sheet_title, 'Event')
+    print('Reading Event data from {}...'.format(sheet.title))
+    event_df = _get(sheet, 'Event')
 
     print('Transforming data...')
-    summary_df = _transform(event_df)
+    df_map =  _transform(event_df)
 
-    print('Writing data into {}:{}...'.format(sheet_title, 'Summary'))
-    _put(gc, sheet_title, 'Summary', summary_df)
+    for tab_title, df in df_map.iteritems():
+        print('Writing {0} data into {1}...'.format(tab_title, sheet.title))
+        _put(sheet, tab_title, df)
+
+
+def create(sheet_tile):
+    """ Create new tabs from scratch from test data"""
+
+
+
+
+
+
+
 
 
 if __name__ == '__main__':
-    update('Math000_SBG')
+    update('1wuUG7IIga74bZzYMMIkhepPufgI5QvNQie6CPTX5U5E')
 
